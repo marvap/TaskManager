@@ -1,0 +1,139 @@
+﻿@page "/tasksView"
+@page "/tasksView/{userId}"
+
+
+@using Microsoft.AspNetCore.Components.QuickGrid
+@using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage
+@using TaskManager.Data
+@using TaskManager.Models
+
+@rendermode InteractiveServer // bez toho nefunguje binding
+
+@inject DataMediator _dataMediator
+@inject ProtectedSessionStorage ProtectedSessionStore
+@inject NavigationManager NavManager
+
+<PageTitle>Tasks</PageTitle>
+
+<h1>Tasks</h1>
+@if (!_currUser?.Company.IsSolver ?? false) // creators only
+{
+    <button class="btn btn-primary" @onclick="CreateNewTask">New Task</button>
+}
+@if (_showMyTasksOnly)
+{
+    <button style="margin-left:100px;" @onclick="ShowAllTasks">All Tasks</button>
+}
+else
+{
+    <button style="margin-left:100px;" @onclick="ShowMyTasksOnly">My Tasks Only</button>
+}
+<button style="margin-left:20px;" @onclick="FilterSpecific">Filter specific</button> Filters unsolved with some unsolved checklist item after Due
+<br />
+<br />
+<h3>@((_showMyTasksOnly ? "My Only Tasks" : "All Tasks") + (_filteredSpec ? " Filtered specifically" : null))</h3>
+
+
+<QuickGrid Items="@Tasks" Pagination="@pagination">
+    <PropertyColumn Property="@(t => t.Title)" Sortable="true" />
+    @if (_currUser.Company.IsSolver) // solvers only
+    {
+        <PropertyColumn Property="@(t => t.CreatorUser.Company.Name)" Title="Company" Sortable="true" />
+    }
+    <PropertyColumn Property="@(t => t.CreatorUser.Name)" Title="Creator" Sortable="true" />
+    <PropertyColumn Property="@(t => t.DateCreated)" Title="Created" Format="yyyy-MM-dd" Sortable="true" />
+    <PropertyColumn Property="@(t => t.DueDate)" Title="Due" Format="yyyy-MM-dd" Sortable="true" />
+    <PropertyColumn Property="@(t => (t.SolverUserId == null ? "" : t.SolverUser.Name))" Title="Solver" Sortable="true" />
+    <PropertyColumn Property="@(t => t.Priority)" Title="Prio" Sortable="true" />
+    <PropertyColumn Property="@(t => t.Status == 1 ? "Processed" : t.Status == 2 ? "Solved" : "New")" Title="Status" Sortable="true" />
+    <TemplateColumn Title="Actions">
+        @if (canBeEdited(context))
+        {
+            <button @onclick="@(() => Edit(context))">Edit</button>
+        }
+    </TemplateColumn>
+</QuickGrid>
+
+<Paginator State="@pagination" />
+
+
+@code {
+    PaginationState pagination = new PaginationState { ItemsPerPage = 5 };
+
+    [Parameter]
+    public string UserId { get; set; } // can't be obtained in OnInitized method from session (too early)
+
+    private IQueryable<TaskManager.Data.Task> Tasks { get; set; }
+    private User _currUser;
+
+    private bool _showMyTasksOnly;
+    private bool _filteredSpec;
+
+    protected override void OnInitialized()
+    {
+        if (string.IsNullOrEmpty(UserId))
+        {
+            NavManager.NavigateTo("/login", true);
+        }
+
+        _currUser = _dataMediator.GetUserById(Convert.ToInt32(UserId));
+
+        Tasks = _dataMediator.GetTasks(filterCompanyId: _currUser.Company.IsSolver ? null : _currUser.Company.Id);
+    }
+
+    protected override async System.Threading.Tasks.Task OnAfterRenderAsync(bool firstRender)
+    {
+        base.OnAfterRenderAsync(firstRender);
+
+        if (firstRender)
+        {
+            var result = await ProtectedSessionStore.GetAsync<int>("UserId");
+            int userId = result.Success ? result.Value : -1;
+
+            if (userId == -1 || userId != Convert.ToInt32(UserId))
+            {
+                NavManager.NavigateTo("/login", true);
+            }
+        }
+    }
+
+    private async void ShowAllTasks()
+    {
+        _showMyTasksOnly = false;
+
+        Tasks = await _dataMediator.GetTasksAsync(filterCompanyId: _currUser.Company.IsSolver ? null : _currUser.Company.Id);
+        _filteredSpec = false;
+        StateHasChanged();
+    }
+
+    private async void ShowMyTasksOnly()
+    {
+        _showMyTasksOnly = true;
+
+        Tasks = await _dataMediator.GetTasksAsync(filterCompanyId: _currUser.Company.IsSolver ? null : _currUser.Company.Id, filterUserId: _currUser.Id);
+        _filteredSpec = false;
+        StateHasChanged();
+    }
+
+    private void FilterSpecific()
+    {
+        Tasks = Tasks.Where(t => t.Status < 2 && t.CheckLists.Any(i => i.Status < 2 && i.DueDate < DateTime.Today));
+        _filteredSpec = true;
+    }
+
+    private bool canBeEdited(TaskManager.Data.Task t)
+    {
+        return _currUser.Company.IsSolver || t.CreatorUserId == _currUser.Id;
+    }
+
+    private void Edit(TaskManager.Data.Task t)
+    { 
+        NavManager.NavigateTo("/taskEdit/" + t.Id, true);
+    }
+
+    private void CreateNewTask()
+    {
+        NavManager.NavigateTo("/taskEdit", true);
+    }
+
+}

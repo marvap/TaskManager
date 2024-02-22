@@ -1,0 +1,184 @@
+﻿@page "/chatRoom/{taskId}/{userId}"
+
+@using Microsoft.AspNetCore.Components.QuickGrid
+@using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage
+@using TaskManager.Models
+@using Microsoft.AspNetCore.SignalR.Client;
+
+@rendermode InteractiveServer // bez toho nefunguje binding
+
+@inject DataMediator _dataMediator
+@inject ProtectedSessionStorage ProtectedSessionStore
+@inject NavigationManager navigationManager
+@inject IJSRuntime JsRuntime
+
+
+<PageTitle>Chat Room</PageTitle>
+
+<h1>Chat Room</h1>
+
+<TaskHeader TaskId="@TaskId" />
+
+<hr />
+
+<div id="scrollbox">
+    @foreach (var item in _messages)
+    {
+        <div class="@item.CSS">
+            <div class="user">@item.Username</div>
+            <div class="msg">@item.Body</div>
+        </div>
+    }
+    <hr />
+    @if (_canIsendMessage)
+    {
+        <textarea class="input-lg" placeholder="enter your comment" @bind="@_newMessage"></textarea>
+        <button class="btn btn-default" @onclick="@(() => SendAsync(_newMessage))">Send</button>
+    }
+    else
+    {
+        <span>You are not authorized to enter new messages.</span>
+    }
+</div>
+
+
+@code {
+    [Parameter]
+    public string TaskId { get; set; } // can't be obtained in OnInitialized method from session (too early)
+
+    [Parameter]
+    public string UserId { get; set; } // can't be obtained in OnInitialized method from session (too early)
+
+    private int _taskCreatorUserId;
+
+    // new message input
+    private string _newMessage;
+
+    private bool _canIsendMessage;
+
+    // list of messages in chat
+    private List<Message> _messages = new ();
+
+    private string _hubUrl;
+    private HubConnection _hubConnection;
+
+    protected override void OnInitialized()
+    {
+        if (_taskCreatorUserId > 0)
+        {
+            return;
+        }
+
+        var task = _dataMediator.GetTaskById(Convert.ToInt32(TaskId));
+
+        _taskCreatorUserId = task.CreatorUserId;
+        _canIsendMessage = task.CreatorUserId == Convert.ToInt32(UserId) || task.SolverUserId == Convert.ToInt32(UserId);
+
+        var messages = _dataMediator.GetMessagesForTask(Convert.ToInt32(TaskId));
+        messages.ForEach(m => _messages.Add(new Message($"{m.CreatorUser.Name} {m.DateCreated}", m.Text, isMineCalc(m.CreatorUserId))));
+    }
+
+    protected override async System.Threading.Tasks.Task OnInitializedAsync()
+    {
+        if (_hubUrl != null)
+        {
+            return;
+        }
+
+        try
+        {
+            // Create the chat client
+            string baseUrl = navigationManager.BaseUri;
+
+            _hubUrl = baseUrl.TrimEnd('/') + ChatHub.HubUrl;
+
+            _hubConnection = new HubConnectionBuilder()
+                .WithUrl(_hubUrl)
+                .Build();
+
+            _hubConnection.On<int, int, string, string>("Broadcast", BroadcastMessage);
+
+            await _hubConnection.StartAsync();
+        }
+        catch (Exception e)
+        {
+            await JsRuntime.InvokeVoidAsync("alert", $"ERROR: Failed to start chat client: {e.Message}");
+        }
+    }
+
+    protected override async System.Threading.Tasks.Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            var result = await ProtectedSessionStore.GetAsync<int>("UserId");
+            int userId = result.Success ? result.Value : -1;
+
+            if (userId == -1 || userId != Convert.ToInt32(UserId))
+            {
+                navigationManager.NavigateTo("/login", true);
+            }
+        }
+    }
+
+    private void BroadcastMessage(int taskId, int creatorUserId, string name, string message)
+    {
+        if (Convert.ToInt32(TaskId) == taskId)
+        {
+            bool isMine = isMineCalc(creatorUserId);
+
+            _messages.Add(new Message(name, message, isMine));
+
+            // Inform blazor the UI needs updating
+            InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private bool isMineCalc(int creatorUserId)
+    {
+        return _canIsendMessage ? Convert.ToInt32(UserId) == creatorUserId :
+            creatorUserId == _taskCreatorUserId; // simplified algorithm
+    }
+
+    // /// <summary>
+    // /// Not used
+    // /// </summary>
+    // private async Task DisconnectAsync()
+    // {
+    //     await SendAsync($"[Notice] /*_username*/ left chat room.");
+
+    //     await _hubConnection.StopAsync();
+    //     await _hubConnection.DisposeAsync();
+
+    //     _hubConnection = null;
+    // }
+
+    private async Task SendAsync(string message)
+    {
+        if (!string.IsNullOrWhiteSpace(message))
+        {
+            await _hubConnection.SendAsync("Broadcast", Convert.ToInt32(TaskId), Convert.ToInt32(UserId), message);
+
+            _newMessage = string.Empty;
+        }
+    }
+
+
+    /// <summary>
+    /// Aux
+    /// </summary>
+    private class Message
+    {
+        public Message(string username, string body, bool mine)
+        {
+            Username = username;
+            Body = body;
+            Mine = mine;
+        }
+
+        public string Username { get; set; }
+        public string Body { get; set; }
+        public bool Mine { get; set; }
+
+        public string CSS => Mine ? "sent" : "received";
+    }
+}

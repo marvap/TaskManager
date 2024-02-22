@@ -1,0 +1,49 @@
+﻿@page "/test"
+
+<h3>Test</h3>
+
+@if (true)
+{
+    System.Diagnostics.Trace.WriteLine("Rendering");    
+}
+@for(int i = 0; i < 3; i++)
+{
+    <span>Ahoj + @i</span>
+}
+
+@code {
+
+    protected override void OnInitialized()
+    {
+        System.Diagnostics.Trace.WriteLine("OnInitialized()");
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        System.Diagnostics.Trace.WriteLine("OnInitializedAsync() 1");
+        //await Task.Delay(2000);
+        System.Diagnostics.Trace.WriteLine("OnInitializedAsync() 2");
+        StateHasChanged();
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        System.Diagnostics.Trace.WriteLine($"OnAfterRender({firstRender})");
+    }
+
+    protected override async System.Threading.Tasks.Task OnAfterRenderAsync(bool firstRender)
+    {
+        System.Diagnostics.Trace.WriteLine($"OnAfterRenderAsync({firstRender})");
+    }
+
+    protected override void OnParametersSet()
+    {
+        System.Diagnostics.Trace.WriteLine($"OnParametersSet()");
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        System.Diagnostics.Trace.WriteLine($"OnParametersSetAsync()");
+    }
+
+}

@@ -1,0 +1,178 @@
+﻿@page "/taskDocuments/{taskId}"
+
+@using Microsoft.AspNetCore.Components.QuickGrid
+@using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage
+@using TaskManager.Models
+
+@rendermode InteractiveServer // bez toho nefunguje binding
+
+@inject DataMediator _dataMediator
+@inject ProtectedSessionStorage ProtectedSessionStore
+@inject NavigationManager NavManager
+@inject IJSRuntime JsRuntime
+
+
+<PageTitle>Task</PageTitle>
+
+<h1>Documents</h1>
+
+<TaskHeader TaskId="@TaskId" />
+
+<QuickGrid Items="@DocumentsList">
+    <PropertyColumn Property="@(d => d.Title)" Sortable="true" />
+    <PropertyColumn Property="@(d => d.DocumentType)" Title="Type" Sortable="true" />
+    <TemplateColumn Title="">
+        <button @onclick="@(() => Open(context))">Open</button>
+    </TemplateColumn>
+    <TemplateColumn Title="">
+        <button @onclick="@(() => Delete(context))">Delete</button>
+    </TemplateColumn>
+</QuickGrid>
+
+
+@if (Document == null)
+{
+    <br />
+    <div>
+        <button @onclick="AddDocument">Add Document</button>
+    </div>
+}
+else
+{
+    <div>
+        <br />
+        <label>
+            Title:
+            <InputText style="width:400px;" @bind-Value="Document!.Title" />
+        </label>
+        <br />
+        <br />
+        <label>
+            Type:
+            <InputText @bind-Value="Document!.DocumentType" />
+        </label>
+    </div>
+    <br />
+    <div>
+        <InputFile OnChange="FileUploaded" />
+    </div>
+
+    @if (!string.IsNullOrEmpty(ErrorMessage))
+    {
+       <div>Error: @ErrorMessage </div>
+    }
+}
+
+@code {
+    [Parameter]
+    public string TaskId { get; set; } // can't be obtained in OnInitialized method from session (too early)
+
+    private IQueryable<TaskManager.Data.Document> DocumentsList { get; set; }
+
+    private TaskManager.Data.Document Document { get; set; }
+
+    public string ErrorMessage { get; set; }
+
+    protected override async System.Threading.Tasks.Task OnInitializedAsync()
+    {
+        DocumentsList = await _dataMediator.GetDocumentsByTaskIdAsync(Convert.ToInt32(TaskId));
+    }
+
+    protected override async System.Threading.Tasks.Task OnAfterRenderAsync(bool firstRender)
+    {
+        base.OnAfterRenderAsync(firstRender);
+
+        if (firstRender)
+        {
+            var result = await ProtectedSessionStore.GetAsync<int>("UserId");
+            int userId = result.Success ? result.Value : -1;
+
+            if (userId == -1)
+            {
+                NavManager.NavigateTo("/login", true);
+            }
+        }
+    }
+
+    private async Task FileUploaded(InputFileChangeEventArgs e)
+    {
+        if (e.File != null)
+        {
+            Document.FileName = e.File.Name;
+
+            if (string.IsNullOrEmpty(Document.Title))
+            {
+                Document.Title = e.File.Name;
+            }
+
+            if (string.IsNullOrEmpty(Document.DocumentType))
+            {
+                Document.DocumentType = e.File.ContentType;
+                if (string.IsNullOrEmpty(Document.DocumentType))
+                {
+                    Document.DocumentType = Path.GetExtension(e.File.Name);
+                }
+            }
+
+            try
+            {
+                var fileStream = e.File.OpenReadStream(Constants.MAX_DOC_FILESIZE);
+                var randomFile = Path.GetTempFileName();
+                var targetStream = new FileStream(randomFile, FileMode.Create);
+                await fileStream.CopyToAsync(targetStream);
+                targetStream.Close();
+
+                if (!await _dataMediator.AddDocumentAsync(Document, randomFile))
+                {
+                    throw new Exception("Server db save didn't succeed!");
+                }
+
+                Document = null;
+                DocumentsList = await _dataMediator.GetDocumentsByTaskIdAsync(Convert.ToInt32(TaskId)); // refresh documents
+                StateHasChanged(); // re-render
+            }
+            catch (Exception ex)
+            {
+                ErrorMessage = ex.Message;
+            }
+        }
+    }
+
+    private void AddDocument()
+    {
+        Document = new Data.Document();
+        Document.TaskId = Convert.ToInt32(TaskId);
+        StateHasChanged(); // re-render
+    }
+
+    private async void Open(TaskManager.Data.Document document)
+    {
+        var tuple = await _dataMediator.GetDocumentContentAsync(document.Id);
+        byte[] documentContent = tuple.Item1;
+        string fileName = tuple.Item2;
+
+        await JsRuntime.InvokeVoidAsync("downloadFile", documentContent, fileName);
+    }
+
+    private async void Delete(TaskManager.Data.Document document)
+    {
+        await _dataMediator.DeleteDocumentByIdAsync(document.Id);
+        DocumentsList = await _dataMediator.GetDocumentsByTaskIdAsync(Convert.ToInt32(TaskId));
+        StateHasChanged();
+    }
+}
+
+<script>
+    window.downloadFile = (content, filename) => {
+        const blob = new Blob([content]);
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.target = "_blank";
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+    };
+</script>

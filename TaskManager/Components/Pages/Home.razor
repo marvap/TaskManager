@@ -1,0 +1,32 @@
+﻿@page "/"
+
+@using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage
+
+@rendermode InteractiveServer // bez toho nefunguje binding ani OnAfterRenderAsync
+
+@inject NavigationManager NavManager
+@inject ProtectedSessionStorage ProtectedSessionStore
+
+
+
+@code {
+    protected override async System.Threading.Tasks.Task OnAfterRenderAsync(bool firstRender)
+    {
+        base.OnAfterRenderAsync(firstRender);
+
+        if (firstRender)
+        {
+            var result = await ProtectedSessionStore.GetAsync<int>("UserId");
+            int userId = result.Success ? result.Value : -1;
+
+            if (userId < 1)
+            {
+                NavManager.NavigateTo("/login", true);
+            }
+            else
+            {
+                NavManager.NavigateTo("/tasksView/" + userId, true);
+            }
+        }
+    }
+}

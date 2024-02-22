@@ -1,0 +1,174 @@
+﻿@page "/checkList/{taskId}"
+
+@using Microsoft.AspNetCore.Components.QuickGrid
+@using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage
+@using TaskManager.Data
+@using TaskManager.Models
+
+@rendermode InteractiveServer // bez toho nefunguje binding
+
+@inject DataMediator _dataMediator
+@inject ProtectedSessionStorage ProtectedSessionStore
+@inject NavigationManager NavManager
+@inject IJSRuntime JsRuntime
+
+<PageTitle>Check List</PageTitle>
+
+<h1>Check List</h1>
+
+<TaskHeader TaskId="@TaskId" />
+
+<QuickGrid Items="@ItemsList">
+    <TemplateColumn Title="Activities">
+        <div style="max-width:500px">
+            @context.Text
+        </div>
+    </TemplateColumn>
+    <PropertyColumn Property="@(i => i.DueDate)" Title="Due" Format="yyyy-MM-dd" Sortable="true" />
+    <PropertyColumn Property="@(i => presentStatusText(i.Status))" Title="Status" Sortable="true" />
+    <TemplateColumn Title="Action">
+        <button @onclick="@(() => Edit(context))">Edit</button>
+    </TemplateColumn>
+    <TemplateColumn Title="">
+        <button @onclick="@(() => DeleteAsync(context))">Delete</button>
+    </TemplateColumn>
+</QuickGrid>
+
+
+@if (Item == null)
+{
+    <br />
+    <div>
+        <button @onclick="AddItem">Add Item</button>
+    </div>
+}
+
+@if (Item != null)
+{
+    <form method="post" @onsubmit="Submit" @formname="starship-plain-form">
+        <AntiforgeryToken />
+        <div>
+            <br />
+            <label>
+                Activity:
+                <InputTextArea style="width:400px;height:120px" @bind-Value="Item!.Text" />
+            </label>
+            <br />
+            <br />
+            <label>
+                Term:
+                <InputDate @bind-Value="Item!.DueDate" />
+            </label>
+            <br />
+            <br />
+            <label>
+                Status:
+                <InputSelect @bind-Value="@Item!.Status">
+                    <option value="0" selected="@(Item!.Status == 0)">New</option>
+                    <option value="1" selected="@(Item!.Status == 1)">Processed</option>
+                    <option value="2" selected="@(Item!.Status == 2)">Solved</option>
+                </InputSelect>
+                @if (Item.Id > 0)
+                {
+                    <button style="margin-left:20px;">Change</button>
+                }
+            </label>
+        </div>
+        @if (Item.Id == 0)
+        {
+            <br />
+            <div>
+                <button type="submit">Submit</button>
+            </div>
+        }
+    </form>
+
+    @if (!string.IsNullOrEmpty(ErrorMessage))
+    {
+        <div>Error: @ErrorMessage </div>
+    }
+}
+
+@code {
+    [Parameter]
+    public string TaskId { get; set; } // can't be obtained in OnInitialized method from session (too early)
+
+    private IQueryable<TaskManager.Data.CheckList> ItemsList { get; set; }
+
+    private TaskManager.Data.CheckList Item { get; set; }
+
+    public string ErrorMessage { get; set; }
+
+    protected override void OnInitialized()
+    {
+        ItemsList = _dataMediator.GetCheckListByTaskId(Convert.ToInt32(TaskId));
+    }
+
+    protected override async System.Threading.Tasks.Task OnAfterRenderAsync(bool firstRender)
+    {
+        base.OnAfterRenderAsync(firstRender);
+
+        if (firstRender)
+        {
+            var result = await ProtectedSessionStore.GetAsync<int>("UserId");
+            int userId = result.Success ? result.Value : -1;
+
+            if (userId == -1)
+            {
+                NavManager.NavigateTo("/login", true);
+            }
+        }
+    }
+
+    private async void Submit()
+    {
+        if (string.IsNullOrEmpty(Item.Text))
+        {
+            await JsRuntime.InvokeVoidAsync("alert", "Text can't be empty!");
+            return;            
+        }
+
+        if (Item.Id == 0)
+        {
+            Item.TaskId = Convert.ToInt32(TaskId);
+            int itemId = await _dataMediator.AddCheckListItemAsync(Item);
+        }
+        else
+        {
+            await _dataMediator.UpdateCheckListItemDetailsAsync(Item);
+        }
+        Item = null;
+
+        ItemsList = await _dataMediator.GetCheckListByTaskIdAsync(Convert.ToInt32(TaskId));
+
+        StateHasChanged(); // re-render
+    }
+
+    private void AddItem()
+    {
+        Item = new Data.CheckList() { DueDate = DateTime.Today.AddDays(1) }; // in fact new item
+        Item.TaskId = Convert.ToInt32(TaskId);
+        StateHasChanged(); // re-render
+    }
+
+
+    private string presentStatusText(int status)
+    {
+        return status < 1 ? "New" :
+        status == 1 ? "Processed" : "Solved";
+    }
+
+    private async void Edit(TaskManager.Data.CheckList item)
+    {
+        Item = await _dataMediator.GetCheckListItemByIdAsync(item.Id);
+        StateHasChanged(); // re-render
+    }
+
+    private async void DeleteAsync(TaskManager.Data.CheckList item)
+    {
+        await _dataMediator.DeleteCheckListItemByIdAsync(item.Id);
+        ItemsList = await _dataMediator.GetCheckListByTaskIdAsync(Convert.ToInt32(TaskId));
+        StateHasChanged(); // re-render
+    }
+
+}

@@ -1,0 +1,82 @@
+﻿@page "/login"
+@page "/login/{action}"
+
+@using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage
+@using TaskManager.Data
+@using TaskManager.Models
+
+@rendermode InteractiveServer // bez toho nefunguje binding
+
+@inject DataMediator _dataMediator
+@inject ProtectedSessionStorage ProtectedSessionStore
+@inject NavigationManager NavManager
+
+
+<PageTitle>Login</PageTitle>
+
+<h1>Login</h1>
+
+<form method="post" @onsubmit="Submit" @formname="starship-plain-form">
+    <AntiforgeryToken />
+    <div>
+        <br/>
+        <label>
+            Login Name:
+            <InputText @bind-Value="LoginName" />
+        </label>
+        <label>
+            Password: 
+            <InputText type="password" @bind-Value="Password" />
+        </label>
+    </div>
+    <br />
+    <div>
+        <button type="submit">Submit</button>
+    </div>
+</form>
+
+<button class="btn btn-primary" @onclick="Test">Test</button>
+
+@code {
+    [Parameter]
+    public string Action { get; set; } // can be "logout"
+
+    private string LoginName { get; set; }
+    private string Password { get; set; }
+
+    protected override async System.Threading.Tasks.Task OnAfterRenderAsync(bool firstRender)
+    {
+        base.OnAfterRenderAsync(firstRender);
+
+        if (firstRender)
+        {
+            if (Action == "logout")
+            {
+                await ProtectedSessionStore.SetAsync("UserId", -1);
+                await ProtectedSessionStore.SetAsync("TaskId", -1);
+
+                DataMediator.ActiveUserName = null;
+                StateHasChanged(); // re-render (nevymaže jméno z logout menu :/)
+            }
+        }
+    }
+
+
+    private async void Submit()
+    {
+        int userId = await _dataMediator.GetUserIdByLoginDataAsync(LoginName, Password);
+        await ProtectedSessionStore.SetAsync("UserId", userId);
+
+        if (userId >= 0)
+        {
+            User user = await _dataMediator.GetUserByIdAsync(userId);
+            DataMediator.ActiveUserName = user?.Name;
+            NavManager.NavigateTo("/tasksView/" + userId, true);
+        }
+    }
+
+    private void Test()
+    {
+        NavManager.NavigateTo("/test", true);
+    }
+}

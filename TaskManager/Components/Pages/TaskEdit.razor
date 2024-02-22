@@ -1,0 +1,226 @@
+﻿@page "/taskEdit"
+@page "/taskEdit/{taskId}"
+
+@using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage
+@using TaskManager.Data
+@using TaskManager.Models
+
+@rendermode InteractiveServer // bez toho nefunguje binding
+
+@inject DataMediator _dataMediator
+@inject ProtectedSessionStorage ProtectedSessionStore
+@inject NavigationManager NavManager
+@inject IJSRuntime JsRuntime
+
+
+<PageTitle>Task</PageTitle>
+
+<h1>Task</h1>
+
+<form method="post" @onsubmit="Submit" @formname="starship-plain-form">
+    <AntiforgeryToken />
+    <div>
+        <br />
+        <label>
+            Title:
+            <InputText style="width:400px;" @bind-Value="TaskItem!.Title" />
+        </label>
+        <br />
+        <br />
+        <label>
+            Text:
+            <InputTextArea style="width:400px;height:120px" @bind-Value="TaskItem!.Text" />
+        </label>
+        <br />
+        <label>
+            Term:
+            <InputDate @bind-Value="TaskItem!.DueDate" />
+        </label>
+        <br />
+        <br />
+        <label>
+            Priority:
+            <InputNumber style="width:50px;" @bind-Value="TaskItem!.Priority" />
+        </label>
+        <br />
+        <br />
+        <label>
+            Solved by:
+            <InputSelect disabled="@IsClient" style="width:160px;" @bind-Value="@TaskItem!.SolverUserId">
+                <option value="" selected="@false)"></option>
+                @foreach (User user in _allSolvers)
+                {
+                    <option value="@(user.Id)" selected="@(TaskItem!.SolverUserId == user.Id)">@(user.Name)</option>
+                }
+            </InputSelect>
+        </label>
+        <br />
+        <br />
+        <label>
+            Status:
+            <InputSelect disabled="@IsClient" @bind-Value="@TaskItem!.Status">
+                <option value="0" selected="@(TaskItem!.Status == 0)">New</option>
+                <option value="1" selected="@(TaskItem!.Status == 1)">Processed</option>
+                <option value="2" selected="@(TaskItem!.Status == 2)">Solved</option>
+            </InputSelect>
+            @if (TaskItem.Id > 0)
+            {
+                <button style="margin-left:20px;">Change</button>
+            }
+        </label>
+        @if (TaskItem.Status == 2)
+        {
+            <br />
+            <br />
+            <label>
+                Soluton:
+                <InputTextArea style="width:400px;height:120px" placeholder="Solution text is mandatory" @bind-Value="TaskItem!.SolutionText" />
+            </label>
+        }
+    </div>
+    @if (TaskItem.Id == 0)
+    {
+        <br />
+        <div>
+            <button type="submit">Submit</button>
+        </div>
+    }
+</form>
+
+@if (TaskItem.Id > 0)
+{
+    <br />
+    <div>
+        <button @onclick="Documents">Documents</button>
+    </div>
+
+    <div>
+        <button style="margin-top:10px;" disabled="@IsClient" @onclick="CheckList">Check List</button>
+    </div>
+
+    <div>
+        <button style="margin-top:10px;" @onclick="ChatRoom">Chat</button>
+    </div>
+}
+
+
+@code {
+    [Parameter]
+    public string TaskId { get; set; } // can't be obtained in OnInitialized method from session (too early)
+
+    private List<User> _allSolvers;
+
+    private User _currUser;
+
+    private bool IsClient
+    {
+        get
+        {
+            bool retvalue = !_currUser?.Company.IsSolver ?? true;
+            return retvalue;
+        }
+    }
+
+    private TaskManager.Data.Task? TaskItem { get; set; }
+
+
+    protected override void OnInitialized()
+    {
+        if (string.IsNullOrEmpty(TaskId))
+        {
+            TaskItem = new TaskManager.Data.Task() { DateCreated = DateTime.Today, DueDate = DateTime.Today.AddDays(1), Priority = 1 };
+        }
+        else
+        {
+            TaskItem = _dataMediator.GetTaskById(Convert.ToInt32(TaskId));
+        }
+
+        _allSolvers = _dataMediator.GetAllSolvers();
+
+        System.Diagnostics.Trace.WriteLine("OnInitialized End");
+    }
+
+    protected override async System.Threading.Tasks.Task OnAfterRenderAsync(bool firstRender)
+    {
+        base.OnAfterRenderAsync(firstRender);
+
+        if (firstRender)
+        {
+            var result = await ProtectedSessionStore.GetAsync<int>("UserId");
+            int userId = result.Success ? result.Value : -1;
+
+            if (userId == -1)
+            {
+                NavManager.NavigateTo("/login", true);
+            }
+
+            _currUser = await _dataMediator.GetUserByIdAsync(userId);
+            StateHasChanged();
+        }
+    }
+
+    private async void Submit()
+    {
+        if (TaskItem.Priority < 1 || TaskItem.Priority > 5)
+        {
+            await JsRuntime.InvokeVoidAsync("alert", "Priority must be between 1 and 5!");
+            return;
+        }
+        if (string.IsNullOrEmpty(TaskItem.Title) || string.IsNullOrEmpty(TaskItem.Text))
+        {
+            await JsRuntime.InvokeVoidAsync("alert", "Title nor Text can't be empty!");
+            return;
+        }
+
+        var result = await ProtectedSessionStore.GetAsync<int>("UserId");
+        int creatorUserId = result.Success ? result.Value : -1;
+
+        if (creatorUserId < 0)
+        {
+            await JsRuntime.InvokeVoidAsync("alert", "Unknown creator!");
+            return;
+        }
+
+        if (TaskItem.Id == 0)
+        {
+            int taskId = await _dataMediator.CreateTaskAsync(TaskItem, creatorUserId);
+            await ProtectedSessionStore.SetAsync("TaskId", taskId);
+        }
+        else
+        {
+            if (TaskItem.Status == 2 && string.IsNullOrEmpty(TaskItem.SolutionText))
+            {
+                await JsRuntime.InvokeVoidAsync("alert", "Solution text is mandatory for Solved Tasks!");
+                return;
+            }
+            if (TaskItem.Status < 2)
+            {
+                TaskItem.SolutionText = string.Empty; // preventive cleaning
+            }
+
+            await _dataMediator.UpdateTaskDetailsAsync(TaskItem);
+        }
+
+        StateHasChanged(); // re-render
+    }
+
+    private void Documents()
+    {
+        NavManager.NavigateTo("/taskDocuments/" + TaskItem.Id, true);
+
+    }
+
+    private void CheckList()
+    {
+        NavManager.NavigateTo("/checkList/" + TaskItem.Id, true);
+    }
+
+    private async void ChatRoom()
+    {
+        var result = await ProtectedSessionStore.GetAsync<int>("UserId");
+        int userId = result.Success ? result.Value : -1;
+
+        NavManager.NavigateTo($"/chatRoom/{TaskItem.Id}/{userId}", true);
+    }
+
+}

@@ -1,0 +1,43 @@
+﻿@page "/taskHeader"
+
+@using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage
+@using TaskManager.Models
+
+@rendermode InteractiveServer // bez toho nefunguje binding
+
+@inject DataMediator _dataMediator
+@inject NavigationManager NavManager
+
+
+<div>
+    <br />
+    <label>
+        Task Title:
+        <InputText style="width:400px;" @bind-Value="TaskItem!.Title" />
+    </label>
+    <br />
+    <br />
+    <div>
+        <button @onclick="Submit">Back To Task</button>
+    </div>
+    <br />
+</div>
+
+
+@code {
+    [Parameter]
+    public string TaskId { get; set; } // can't be obtained in OnInitialized method from session (too early)
+
+    private TaskManager.Data.Task? TaskItem { get; set; }
+
+    protected override void OnInitialized()
+    {
+        TaskItem = _dataMediator.GetTaskById(Convert.ToInt32(TaskId));
+    }
+
+    protected async void Submit()
+    {
+        NavManager.NavigateTo("/taskEdit/" + TaskId, true);
+    }
+
+}
